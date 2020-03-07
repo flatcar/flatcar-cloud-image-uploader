@@ -22,6 +22,9 @@ Usage: $0 [OPTION...]
   -i, --image-name           Image name, which will be used later in Lokomotive configuration. Defaults to 'flatcar-<channel>'.
   -l, --location             Azure location to storage image. To list available locations run with '--locations'. Defaults to '${LOCATION}'.
   -S, --storage-account-type Type of storage account. Defaults to '${STORAGE_ACCOUNT_TYPE}'.
+  --subscription             Azure subscription name or id.
+  --skip-resource-group      Skip creation of resource group.
+  --skip-storage-account     Skip creation of storage account.
 HELP_USAGE
 }
 
@@ -73,6 +76,19 @@ case $key in
 		shift
 		shift
 	;;
+	--subscription)
+		SUBCRIPTION="$2"
+		shift
+		shift
+	;;
+	--skip-resource-group)
+		SKIP_RESOURCE_GROUP="TRUE"
+		shift
+	;;
+	--skip-storage-account)
+		SKIP_STORAGE_ACCOUNT="TRUE"
+		shift
+	;;
 	*)
 		echo "Unknown argument $1"
 		echo
@@ -101,11 +117,15 @@ fi
 # Login to azure
 az login
 
-# Create resource group
-az group create --name $RESOURCE_GROUP --location $LOCATION
+if [[ -n "${SUBCRIPTION}" ]]; then
+	echo "Using Azure subscription: ${SUBCRIPTION}"
+	az account set -s $SUBCRIPTION
+fi
+
+[[ -z "${SKIP_RESOURCE_GROUP}" ]] && az group create --name $RESOURCE_GROUP --location $LOCATION
 
 # Create storage account
-az storage account create \
+[[ -z "${SKIP_STORAGE_ACCOUNT}" ]] && az storage account create \
 	--resource-group $RESOURCE_GROUP \
 	--location $LOCATION \
 	--name $STORAGE_ACCOUNT_NAME \
@@ -118,7 +138,7 @@ KEY=$(az storage account keys list \
 	--account-name $STORAGE_ACCOUNT_NAME | jq -r '.[0].value')
 
 # Make sure there is no old images
-rm flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2 || true
+rm -f flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2
 
 # Download Flatcar image
 wget https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/flatcar_production_azure_image.vhd.bz2
@@ -134,7 +154,7 @@ azure-vhd-utils upload \
 	--stgaccountkey "$KEY"
 
 # Cleanup after downloading
-rm flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2 || true
+rm -f flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2
 
 # Create disk from uploaded image and save it's ID
 DISK_ID=$(az disk create --name $IMAGE_NAME -g $RESOURCE_GROUP --source https://$STORAGE_ACCOUNT_NAME.blob.core.windows.net/vhds/$IMAGE_NAME.vhd | jq -r '.id')
