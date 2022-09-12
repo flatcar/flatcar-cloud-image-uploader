@@ -1,4 +1,4 @@
-FROM google/cloud-sdk:335.0.0-alpine
+FROM google/cloud-sdk:401.0.0-alpine
 
 COPY ./upload_image.sh /usr/local/bin/upload_images.sh
 
