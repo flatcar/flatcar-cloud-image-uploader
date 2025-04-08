@@ -89,6 +89,11 @@ case $key in
 		SKIP_STORAGE_ACCOUNT="TRUE"
 		shift
 	;;
+	-u|--url)
+		FLATCAR_URL="$2"
+		shift
+		shift
+	;;
 	*)
 		echo "Unknown argument $1"
 		echo
@@ -129,7 +134,7 @@ fi
 	--resource-group $RESOURCE_GROUP \
 	--location $LOCATION \
 	--name $STORAGE_ACCOUNT_NAME \
-	--kind Storage \
+	--kind StorageV2 \
 	--sku $STORAGE_ACCOUNT_TYPE
 
 # Obtain storage key for created storage account
@@ -141,7 +146,11 @@ KEY=$(az storage account keys list \
 rm -f flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2
 
 # Download Flatcar image
-wget https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/flatcar_production_azure_image.vhd.bz2
+if [ ! -z "$FLATCAR_URL" ]; then
+	curl -o flatcar_production_azure_image.vhd.bz2 "$FLATCAR_URL"
+else
+	curl -LO https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/flatcar_production_azure_image.vhd.bz2
+fi
 
 # And unpack it
 bzip2 -d flatcar_production_azure_image.vhd.bz2
