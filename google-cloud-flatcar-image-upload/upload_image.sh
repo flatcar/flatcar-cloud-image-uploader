@@ -26,6 +26,7 @@ Usage: $0 [OPTION...]
    -f, --force-reupload If used, image will be uploaded even if it already exist in the bucket.
    -F, --force-recreate If user, if compute image already exist, it will be removed and recreated.
    -s, --skip-auth      Skip the authorization steps.
+   -u, --image-url      Use direct URL to image
 HELP_USAGE
 }
 
@@ -79,6 +80,11 @@ case $key in
 		SKIP_AUTH=true
 		shift
 	;;
+	-u|--image-url)
+		IMAGE_URL="$2"
+		shift
+		shift
+	;;
 	*)
 		echo "Unknown parameter $1"
 		echo
@@ -126,7 +132,9 @@ else
 fi
 
 IMAGE_FILENAME="flatcar_production_gce.tar.gz"
-IMAGE_URL="https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/${IMAGE_FILENAME}"
+if [[ -z "$IMAGE_URL" ]]; then
+  IMAGE_URL="https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/${IMAGE_FILENAME}"
+fi
 
 BUCKET_IMAGE_PATH=$BUCKET_PATH/$IMAGE_FILENAME
 UPLOAD_IMAGE=true
