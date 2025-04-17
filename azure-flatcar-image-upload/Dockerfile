@@ -1,12 +1,11 @@
-FROM microsoft/azure-cli
+FROM mcr.microsoft.com/azure-cli
 
-RUN apk add jq && \
-    apk add go --update-cache --repository http://dl-3.alpinelinux.org/alpine/edge/community/ --allow-untrusted
+RUN tdnf -y install go jq unzip make
 
 WORKDIR /usr/src
 
-RUN go get -u golang.org/x/lint/golint && \
-    wget https://github.com/microsoft/azure-vhd-utils/archive/master.zip && \
+RUN go install golang.org/x/lint/golint@latest && \
+    curl -LO https://github.com/microsoft/azure-vhd-utils/archive/master.zip && \
     unzip master.zip && \
     rm master.zip
 
