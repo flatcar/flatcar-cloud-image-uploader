@@ -6,15 +6,15 @@ RUN apk add jq && \
 WORKDIR /usr/src
 
 RUN go get -u golang.org/x/lint/golint && \
-    wget https://github.com/microsoft/azure-vhd-utils/archive/master.zip && \
-    unzip master.zip && \
-    rm master.zip
+    wget https://github.com/microsoft/azure-vhd-utils/archive/main.zip && \
+    unzip main.zip && \
+    rm main.zip
 
-WORKDIR /usr/src/azure-vhd-utils-master
+WORKDIR /usr/src/azure-vhd-utils-main
 
 ENV PATH="/root/go/bin:${PATH}"
 RUN make && \
-    cp /usr/src/azure-vhd-utils-master/azure-vhd-utils /usr/local/bin/azure-vhd-utils
+    cp /usr/src/azure-vhd-utils-main/azure-vhd-utils /usr/local/bin/azure-vhd-utils
 
 COPY ./upload_image.sh /usr/local/bin/upload_images.sh
 
