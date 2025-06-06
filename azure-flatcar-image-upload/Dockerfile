@@ -6,7 +6,7 @@ RUN apk add jq && \
 WORKDIR /usr/src
 
 RUN go get -u golang.org/x/lint/golint && \
-    wget https://github.com/microsoft/azure-vhd-utils/archive/main.zip && \
+    wget https://github.com/microsoft/azure-vhd-utils/archive/master.zip && \
     unzip main.zip && \
     rm main.zip
 
