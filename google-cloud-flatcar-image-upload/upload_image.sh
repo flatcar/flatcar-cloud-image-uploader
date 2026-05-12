@@ -16,7 +16,7 @@ Usage: $0 [OPTION...]
 
  Required arguments:
   -b, --bucket-name Name of GCP bucket for storing images.
-  -p, --project-id  ID of the project for creating bucket. Not required if --skip-auth is used.
+  -p, --project-id  ID of the project for creating bucket. Must be given if CLOUDSDK_CORE_PROJECT is not set.
 
  Optional arguments:
   -c, --channel     Flatcar Linux release channel. Defaults to '${FLATCAR_LINUX_CHANNEL}'.
@@ -56,7 +56,7 @@ case $key in
 		shift 2
 	;;
 	-p|--project-id)
-		PROJECT_ID="$2"
+		export CLOUDSDK_CORE_PROJECT="$2"
 		shift 2
 	;;
 	-z|--zone)
@@ -97,20 +97,16 @@ if [[ -z ${BUCKET_NAME-} ]]; then
 	exit 1
 fi
 
-if [[ ${SKIP_AUTH} != true ]]; then
-	if [[ -z ${PROJECT_ID-} ]]; then
-		echo "--project-id must be specified."
-		echo
-		usage
-		exit 1
-	fi
+if [[ -z ${CLOUDSDK_CORE_PROJECT-} ]]; then
+	echo "--project-id must be specified or CLOUDSDK_CORE_PROJECT must be set."
+	echo
+	usage
+	exit 1
+fi
 
+if [[ ${SKIP_AUTH} != true ]]; then
 	echo "Logging into Google Cloud."
 	gcloud auth login
-
-	echo
-	echo "Setting default project to '${PROJECT_ID}'"
-	gcloud config set project "${PROJECT_ID}"
 fi
 
 BUCKET_PATH=gs://${BUCKET_NAME}
