@@ -28,6 +28,9 @@ Usage: $0 [OPTION...]
    -F, --force-recreate If user, if compute image already exist, it will be removed and recreated.
    -s, --skip-auth      Skip the authorization steps.
    -u, --image-url      Use direct URL to image
+
+ Environment variables:
+   GOOGLE_APPLICATION_CREDENTIALS The credentials file referenced by this will be used for authorization if set.
 HELP_USAGE
 }
 
@@ -106,7 +109,7 @@ fi
 
 if [[ ${SKIP_AUTH} != true ]]; then
 	echo "Logging into Google Cloud."
-	gcloud auth login
+	gcloud auth login ${GOOGLE_APPLICATION_CREDENTIALS:+--cred-file "${GOOGLE_APPLICATION_CREDENTIALS}"}
 fi
 
 BUCKET_PATH=gs://${BUCKET_NAME}
