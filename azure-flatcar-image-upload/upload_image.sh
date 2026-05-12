@@ -1,6 +1,6 @@
 #!/bin/bash
-set -o errexit
-set -o pipefail
+
+set -euo pipefail
 
 # Default values
 FLATCAR_LINUX_CHANNEL=stable
@@ -20,7 +20,7 @@ Usage: $0 [OPTION...]
   -c, --channel              Flatcar Linux release channel. Defaults to '${FLATCAR_LINUX_CHANNEL}'.
   -v, --version              Flatcar Linux version. Defaults to '${FLATCAR_LINUX_VERSION}'.
   -i, --image-name           Image name, which will be used later in Lokomotive configuration. Defaults to 'flatcar-<channel>'.
-  -l, --location             Azure location to storage image. To list available locations run with '--locations'. Defaults to '${LOCATION}'.
+  -l, --location             Azure image storage location. To list available locations run with '--locations'. Defaults to '${LOCATION}'.
   -S, --storage-account-type Type of storage account. Defaults to '${STORAGE_ACCOUNT_TYPE}'.
   --subscription             Azure subscription name or id.
   --skip-resource-group      Skip creation of resource group.
@@ -43,43 +43,35 @@ case $key in
 	;;
 	-c|--channel)
 		FLATCAR_LINUX_CHANNEL="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-v|--version)
 		FLATCAR_LINUX_VERSION="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-i|--image-name)
 		IMAGE_NAME="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-l|--location)
 		LOCATION="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-g|--resource-group)
 		RESOURCE_GROUP="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-s|--storage-account-name)
-		STORAGE_ACCOUNT_NAME="$2"
-		shift
-		shift
+		export AZURE_STORAGE_ACCOUNT="$2"
+		shift 2
 	;;
 	-S|--storage-account-type)
 		STORAGE_ACCOUNT_TYPE="$2"
-		shift
-		shift
+		shift 2
 	;;
 	--subscription)
-		SUBCRIPTION="$2"
-		shift
-		shift
+		SUBSCRIPTION="$2"
+		shift 2
 	;;
 	--skip-resource-group)
 		SKIP_RESOURCE_GROUP="TRUE"
@@ -91,8 +83,7 @@ case $key in
 	;;
 	-u|--url)
 		FLATCAR_URL="$2"
-		shift
-		shift
+		shift 2
 	;;
 	*)
 		echo "Unknown argument $1"
@@ -104,73 +95,75 @@ esac
 done
 
 IMAGE_NAME="${IMAGE_NAME:-flatcar-${FLATCAR_LINUX_CHANNEL}}"
+: "${FLATCAR_URL:=https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/flatcar_production_azure_image.vhd.bz2}"
 
-if [[ -z "${RESOURCE_GROUP}" ]]; then
+if [[ -z ${RESOURCE_GROUP-} ]]; then
 	echo "--resource-group must be specified."
 	echo
 	usage
 	exit 1
 fi
 
-if [[ -z "${STORAGE_ACCOUNT_NAME}" ]]; then
+if [[ -z ${AZURE_STORAGE_ACCOUNT-} ]]; then
 	echo "--storage-account-name must be specified."
 	echo
 	usage
 	exit 1
 fi
 
-# Login to azure
 az login
 
-if [[ -n "${SUBCRIPTION}" ]]; then
-	echo "Using Azure subscription: ${SUBCRIPTION}"
-	az account set -s $SUBCRIPTION
+if [[ -n ${SUBSCRIPTION-} ]]; then
+	echo "Using Azure subscription: ${SUBSCRIPTION}"
+	az account set --name "${SUBSCRIPTION}"
 fi
 
-[[ -z "${SKIP_RESOURCE_GROUP}" ]] && az group create --name $RESOURCE_GROUP --location $LOCATION
+[[ -z ${SKIP_RESOURCE_GROUP-} ]] &&
+	az group create \
+		--name "${RESOURCE_GROUP}" \
+		--location "${LOCATION}"
 
-# Create storage account
-[[ -z "${SKIP_STORAGE_ACCOUNT}" ]] && az storage account create \
-	--resource-group $RESOURCE_GROUP \
-	--location $LOCATION \
-	--name $STORAGE_ACCOUNT_NAME \
-	--kind StorageV2 \
-	--sku $STORAGE_ACCOUNT_TYPE
+[[ -z ${SKIP_STORAGE_ACCOUNT-} ]] &&
+	az storage account create \
+		--name "${AZURE_STORAGE_ACCOUNT}" \
+		--resource-group "${RESOURCE_GROUP}" \
+		--location "${LOCATION}" \
+		--sku "${STORAGE_ACCOUNT_TYPE}" \
+		--kind StorageV2
 
 # Obtain storage key for created storage account
-KEY=$(az storage account keys list \
-	--resource-group $RESOURCE_GROUP \
-	--account-name $STORAGE_ACCOUNT_NAME | jq -r '.[0].value')
+export AZURE_STORAGE_KEY
+AZURE_STORAGE_KEY=$(
+	az storage account keys list \
+		--resource-group "${RESOURCE_GROUP}" \
+		--account-name "${AZURE_STORAGE_ACCOUNT}" |
+			jq -r '.[0].value'
+)
 
-# Make sure there is no old images
-rm -f flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2
+az storage container create \
+	--name vhds
 
-# Download Flatcar image
-if [ ! -z "$FLATCAR_URL" ]; then
-	curl -o flatcar_production_azure_image.vhd.bz2 "$FLATCAR_URL"
-else
-	curl -LO https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/flatcar_production_azure_image.vhd.bz2
-fi
+TEMP_DATA=$(mktemp -t az.XXXXXXXXXX)
+trap 'rm -f -- "${TEMP_DATA}"' EXIT
+curl -f -L "${FLATCAR_URL}" | bzip2 -d > "${TEMP_DATA}"
 
-# And unpack it
-bzip2 -d flatcar_production_azure_image.vhd.bz2
-
-# Upload image to Azure
-azure-vhd-utils upload \
-	--localvhdpath flatcar_production_azure_image.vhd \
-	--stgaccountname $STORAGE_ACCOUNT_NAME \
-	--blobname $IMAGE_NAME \
-	--stgaccountkey "$KEY"
-
-# Cleanup after downloading
-rm -f flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2
+az storage blob upload \
+	--container-name vhds \
+	--name "${IMAGE_NAME}.vhd" \
+	--file "${TEMP_DATA}" \
+	--type page
 
 # Create disk from uploaded image and save it's ID
-DISK_ID=$(az disk create --name $IMAGE_NAME -g $RESOURCE_GROUP --source https://$STORAGE_ACCOUNT_NAME.blob.core.windows.net/vhds/$IMAGE_NAME.vhd | jq -r '.id')
+DISK_ID=$(
+	az disk create \
+		--name "${IMAGE_NAME}" \
+		--resource-group "${RESOURCE_GROUP}" \
+		--source "https://${AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/vhds/${IMAGE_NAME}.vhd" |
+			jq -r '.id'
+)
 
-# Create image
 az image create \
-	-g $RESOURCE_GROUP \
-	--name $IMAGE_NAME \
-	--source $DISK_ID \
+	--name "${IMAGE_NAME}" \
+	--resource-group "${RESOURCE_GROUP}" \
+	--source "${DISK_ID}" \
 	--os-type linux
