@@ -28,6 +28,11 @@ Usage: $0 [OPTION...]
 HELP_USAGE
 }
 
+az_login() {
+	# Only log in if actually necessary.
+	az account show --query user --output none 2>/dev/null || az login
+}
+
 while [[ $# -gt 0 ]]; do
 key="$1"
 
@@ -37,7 +42,7 @@ case $key in
 		exit 0
 	;;
 	-L|--locations)
-		az login
+		az_login
 		az account list-locations
 		exit 0
 	;;
@@ -111,20 +116,17 @@ if [[ -z ${AZURE_STORAGE_ACCOUNT-} ]]; then
 	exit 1
 fi
 
-az login
-
-if [[ -n ${SUBSCRIPTION-} ]]; then
-	echo "Using Azure subscription: ${SUBSCRIPTION}"
-	az account set --name "${SUBSCRIPTION}"
-fi
+az_login
 
 [[ -z ${SKIP_RESOURCE_GROUP-} ]] &&
 	az group create \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 		--name "${RESOURCE_GROUP}" \
 		--location "${LOCATION}"
 
 [[ -z ${SKIP_STORAGE_ACCOUNT-} ]] &&
 	az storage account create \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 		--name "${AZURE_STORAGE_ACCOUNT}" \
 		--resource-group "${RESOURCE_GROUP}" \
 		--location "${LOCATION}" \
@@ -135,12 +137,14 @@ fi
 export AZURE_STORAGE_KEY
 AZURE_STORAGE_KEY=$(
 	az storage account keys list \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 		--resource-group "${RESOURCE_GROUP}" \
 		--account-name "${AZURE_STORAGE_ACCOUNT}" |
 			jq -r '.[0].value'
 )
 
 az storage container create \
+	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 	--name vhds
 
 TEMP_DATA=$(mktemp -t az.XXXXXXXXXX)
@@ -148,6 +152,7 @@ trap 'rm -f -- "${TEMP_DATA}"' EXIT
 curl -f -L "${FLATCAR_URL}" | bzip2 -d > "${TEMP_DATA}"
 
 az storage blob upload \
+	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 	--container-name vhds \
 	--name "${IMAGE_NAME}.vhd" \
 	--file "${TEMP_DATA}" \
@@ -156,6 +161,7 @@ az storage blob upload \
 # Create disk from uploaded image and save it's ID
 DISK_ID=$(
 	az disk create \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 		--name "${IMAGE_NAME}" \
 		--resource-group "${RESOURCE_GROUP}" \
 		--source "https://${AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/vhds/${IMAGE_NAME}.vhd" |
@@ -163,6 +169,7 @@ DISK_ID=$(
 )
 
 az image create \
+	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 	--name "${IMAGE_NAME}" \
 	--resource-group "${RESOURCE_GROUP}" \
 	--source "${DISK_ID}" \
