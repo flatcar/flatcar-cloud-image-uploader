@@ -114,9 +114,26 @@ az_login
 		--location "${LOCATION}"
 
 TEMP_DATA=$(mktemp -t az.XXXXXXXXXX)
-trap 'rm -f -- "${TEMP_DATA}"' EXIT
+
+az_disk_delete() {
+	az disk delete \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
+		--name "${IMAGE_NAME}" \
+		--resource-group "${RESOURCE_GROUP}" \
+		--yes
+}
+
+trap '
+	rm -f -- "${TEMP_DATA}" || true
+	# The disk is not needed afterwards.
+	az_disk_delete || true
+' EXIT
+
 # shellcheck disable=SC2216
 curl -f -L "${FLATCAR_URL}" | bzip2 -d | cp --sparse=always /dev/stdin "${TEMP_DATA}"
+
+# Delete the disk in case it already exists, otherwise create will error.
+az_disk_delete
 
 DISK_ID=$(
 	az disk create \
@@ -143,8 +160,17 @@ azcopy copy \
 	"${TEMP_DATA}" "${SAS_URL}" \
 	--blob-type PageBlob
 
+# We still need to do this even though we delete the disk on exit because
+# otherwise it will be in the wrong state for image creation.
 az disk revoke-access \
 	--ids "${DISK_ID}"
+
+# Delete the image in case it already exists, otherwise create will error or
+# just do nothing, leaving the old content.
+az image delete \
+	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
+	--name "${IMAGE_NAME}" \
+	--resource-group "${RESOURCE_GROUP}" \
 
 az image create \
 	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
