@@ -149,7 +149,8 @@ az storage container create \
 
 TEMP_DATA=$(mktemp -t az.XXXXXXXXXX)
 trap 'rm -f -- "${TEMP_DATA}"' EXIT
-curl -f -L "${FLATCAR_URL}" | bzip2 -d > "${TEMP_DATA}"
+# shellcheck disable=SC2216
+curl -f -L "${FLATCAR_URL}" | bzip2 -d | cp --sparse=always /dev/stdin "${TEMP_DATA}"
 
 az storage blob upload \
 	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
