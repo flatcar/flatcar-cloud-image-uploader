@@ -7,6 +7,7 @@ FLATCAR_LINUX_CHANNEL=stable
 FLATCAR_LINUX_VERSION=current
 LOCATION=westeurope
 STORAGE_ACCOUNT_TYPE=Standard_LRS
+HYPER_V_GEN=V2
 
 usage() {
 	cat <<HELP_USAGE
@@ -22,6 +23,7 @@ Usage: $0 [OPTION...]
   -i, --image-name           Image name, which will be used later in Lokomotive configuration. Defaults to 'flatcar-<channel>'.
   -l, --location             Azure image storage location. To list available locations run with '--locations'. Defaults to '${LOCATION}'.
   -S, --storage-account-type Type of storage account. Defaults to '${STORAGE_ACCOUNT_TYPE}'.
+  -G, --hyper-v-generation   Hyper-V Generation to set against the image. Defaults to '${HYPER_V_GEN}'.
   --subscription             Azure subscription name or id.
   --skip-resource-group      Skip creation of resource group.
   --skip-storage-account     Skip creation of storage account.
@@ -72,6 +74,10 @@ case $key in
 	;;
 	-S|--storage-account-type)
 		STORAGE_ACCOUNT_TYPE="$2"
+		shift 2
+	;;
+	-G|--hyper-v-generation)
+		HYPER_V_GEN="$2"
 		shift 2
 	;;
 	--subscription)
@@ -165,6 +171,7 @@ DISK_ID=$(
 		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 		--name "${IMAGE_NAME}" \
 		--resource-group "${RESOURCE_GROUP}" \
+		--hyper-v-generation "${HYPER_V_GEN}" \
 		--source "https://${AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/vhds/${IMAGE_NAME}.vhd" |
 			jq -r '.id'
 )
@@ -173,5 +180,6 @@ az image create \
 	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
 	--name "${IMAGE_NAME}" \
 	--resource-group "${RESOURCE_GROUP}" \
+	--hyper-v-generation "${HYPER_V_GEN}" \
 	--source "${DISK_ID}" \
 	--os-type linux
