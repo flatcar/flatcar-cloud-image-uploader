@@ -1,12 +1,13 @@
 #!/bin/bash
-set -o errexit
-set -o pipefail
+
+set -euo pipefail
 
 # Default values
 FLATCAR_LINUX_CHANNEL=stable
 FLATCAR_LINUX_VERSION=current
 LOCATION=westeurope
 STORAGE_ACCOUNT_TYPE=Standard_LRS
+HYPER_V_GEN=V2
 
 usage() {
 	cat <<HELP_USAGE
@@ -14,18 +15,22 @@ Usage: $0 [OPTION...]
 
  Required arguments:
   -g, --resource-group        Azure resource group.
-  -s, --storage-account-name  Azure storage account name. Must be between 3 and 24 characters and unique within Azure.
 
  Optional arguments:
   -c, --channel              Flatcar Linux release channel. Defaults to '${FLATCAR_LINUX_CHANNEL}'.
   -v, --version              Flatcar Linux version. Defaults to '${FLATCAR_LINUX_VERSION}'.
   -i, --image-name           Image name, which will be used later in Lokomotive configuration. Defaults to 'flatcar-<channel>'.
-  -l, --location             Azure location to storage image. To list available locations run with '--locations'. Defaults to '${LOCATION}'.
+  -l, --location             Azure image storage location. To list available locations run with '--locations'. Defaults to '${LOCATION}'.
   -S, --storage-account-type Type of storage account. Defaults to '${STORAGE_ACCOUNT_TYPE}'.
+  -G, --hyper-v-generation   Hyper-V Generation to set against the image. Defaults to '${HYPER_V_GEN}'.
   --subscription             Azure subscription name or id.
   --skip-resource-group      Skip creation of resource group.
-  --skip-storage-account     Skip creation of storage account.
 HELP_USAGE
+}
+
+az_login() {
+	# Only log in if actually necessary.
+	az account show --query user --output none 2>/dev/null || az login
 }
 
 while [[ $# -gt 0 ]]; do
@@ -37,57 +42,49 @@ case $key in
 		exit 0
 	;;
 	-L|--locations)
-		az login
+		az_login
 		az account list-locations
 		exit 0
 	;;
 	-c|--channel)
 		FLATCAR_LINUX_CHANNEL="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-v|--version)
 		FLATCAR_LINUX_VERSION="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-i|--image-name)
 		IMAGE_NAME="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-l|--location)
 		LOCATION="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-g|--resource-group)
 		RESOURCE_GROUP="$2"
-		shift
-		shift
-	;;
-	-s|--storage-account-name)
-		STORAGE_ACCOUNT_NAME="$2"
-		shift
-		shift
+		shift 2
 	;;
 	-S|--storage-account-type)
 		STORAGE_ACCOUNT_TYPE="$2"
-		shift
-		shift
+		shift 2
+	;;
+	-G|--hyper-v-generation)
+		HYPER_V_GEN="$2"
+		shift 2
 	;;
 	--subscription)
-		SUBCRIPTION="$2"
-		shift
-		shift
+		SUBSCRIPTION="$2"
+		shift 2
 	;;
 	--skip-resource-group)
 		SKIP_RESOURCE_GROUP="TRUE"
 		shift
 	;;
-	--skip-storage-account)
-		SKIP_STORAGE_ACCOUNT="TRUE"
-		shift
+	-u|--url)
+		FLATCAR_URL="$2"
+		shift 2
 	;;
 	*)
 		echo "Unknown argument $1"
@@ -99,69 +96,86 @@ esac
 done
 
 IMAGE_NAME="${IMAGE_NAME:-flatcar-${FLATCAR_LINUX_CHANNEL}}"
+: "${FLATCAR_URL:=https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/flatcar_production_azure_image.vhd.bz2}"
 
-if [[ -z "${RESOURCE_GROUP}" ]]; then
+if [[ -z ${RESOURCE_GROUP-} ]]; then
 	echo "--resource-group must be specified."
 	echo
 	usage
 	exit 1
 fi
 
-if [[ -z "${STORAGE_ACCOUNT_NAME}" ]]; then
-	echo "--storage-account-name must be specified."
-	echo
-	usage
-	exit 1
-fi
+az_login
 
-# Login to azure
-az login
+[[ -z ${SKIP_RESOURCE_GROUP-} ]] &&
+	az group create \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
+		--name "${RESOURCE_GROUP}" \
+		--location "${LOCATION}"
 
-if [[ -n "${SUBCRIPTION}" ]]; then
-	echo "Using Azure subscription: ${SUBCRIPTION}"
-	az account set -s $SUBCRIPTION
-fi
+TEMP_DATA=$(mktemp -t az.XXXXXXXXXX)
 
-[[ -z "${SKIP_RESOURCE_GROUP}" ]] && az group create --name $RESOURCE_GROUP --location $LOCATION
+az_disk_delete() {
+	az disk delete \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
+		--name "${IMAGE_NAME}" \
+		--resource-group "${RESOURCE_GROUP}" \
+		--yes
+}
 
-# Create storage account
-[[ -z "${SKIP_STORAGE_ACCOUNT}" ]] && az storage account create \
-	--resource-group $RESOURCE_GROUP \
-	--location $LOCATION \
-	--name $STORAGE_ACCOUNT_NAME \
-	--kind Storage \
-	--sku $STORAGE_ACCOUNT_TYPE
+trap '
+	rm -f -- "${TEMP_DATA}" || true
+	# The disk is not needed afterwards.
+	az_disk_delete || true
+' EXIT
 
-# Obtain storage key for created storage account
-KEY=$(az storage account keys list \
-	--resource-group $RESOURCE_GROUP \
-	--account-name $STORAGE_ACCOUNT_NAME | jq -r '.[0].value')
+# shellcheck disable=SC2216
+curl -f -L "${FLATCAR_URL}" | bzip2 -d | cp --sparse=always /dev/stdin "${TEMP_DATA}"
 
-# Make sure there is no old images
-rm -f flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2
+# Delete the disk in case it already exists, otherwise create will error.
+az_disk_delete
 
-# Download Flatcar image
-wget https://${FLATCAR_LINUX_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_LINUX_VERSION}/flatcar_production_azure_image.vhd.bz2
+DISK_ID=$(
+	az disk create \
+		${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
+		--name "${IMAGE_NAME}" \
+		--resource-group "${RESOURCE_GROUP}" \
+		--hyper-v-generation "${HYPER_V_GEN}" \
+		--sku "${STORAGE_ACCOUNT_TYPE}" \
+		--location "${LOCATION}" \
+		--upload-size-bytes "$(stat -c %s "${TEMP_DATA}")" \
+		--upload-type Upload |
+			jq -r '.id'
+)
 
-# And unpack it
-bzip2 -d flatcar_production_azure_image.vhd.bz2
+SAS_URL=$(
+	az disk grant-access \
+		--ids "${DISK_ID}" \
+		--access-level Write \
+		--duration-in-seconds 120 |
+			jq -r '.accessSAS'
+)
 
-# Upload image to Azure
-azure-vhd-utils upload \
-	--localvhdpath flatcar_production_azure_image.vhd \
-	--stgaccountname $STORAGE_ACCOUNT_NAME \
-	--blobname $IMAGE_NAME \
-	--stgaccountkey "$KEY"
+azcopy copy \
+	"${TEMP_DATA}" "${SAS_URL}" \
+	--blob-type PageBlob
 
-# Cleanup after downloading
-rm -f flatcar_production_azure_image.vhd flatcar_production_azure_image.vhd.bz2
+# We still need to do this even though we delete the disk on exit because
+# otherwise it will be in the wrong state for image creation.
+az disk revoke-access \
+	--ids "${DISK_ID}"
 
-# Create disk from uploaded image and save it's ID
-DISK_ID=$(az disk create --name $IMAGE_NAME -g $RESOURCE_GROUP --source https://$STORAGE_ACCOUNT_NAME.blob.core.windows.net/vhds/$IMAGE_NAME.vhd | jq -r '.id')
+# Delete the image in case it already exists, otherwise create will error or
+# just do nothing, leaving the old content.
+az image delete \
+	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
+	--name "${IMAGE_NAME}" \
+	--resource-group "${RESOURCE_GROUP}" \
 
-# Create image
 az image create \
-	-g $RESOURCE_GROUP \
-	--name $IMAGE_NAME \
-	--source $DISK_ID \
+	${SUBSCRIPTION:+--subscription "${SUBSCRIPTION}"} \
+	--name "${IMAGE_NAME}" \
+	--resource-group "${RESOURCE_GROUP}" \
+	--hyper-v-generation "${HYPER_V_GEN}" \
+	--source "${DISK_ID}" \
 	--os-type linux

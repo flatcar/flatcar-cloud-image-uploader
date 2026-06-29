@@ -13,6 +13,14 @@
 > **Note:** To file an issue for any Flatcar repository, please use the [central Flatcar issue tracker](https://github.com/flatcar/Flatcar/issues).
 </div>
 
+# Flatcar Cloud Image Uploader
+
+This repository holds scripts for each cloud environment to download a Flatcar disk image and then upload it for use in newly deployed VMs. Although the scripts can be used directly, they each have an associated Dockerfile for publishing them as container images on ghcr.io/flatcar. See the Flatcar documentation for more details.
+
+* [Running Flatcar Container Linux on Microsoft Azure
+](https://www.flatcar.org/docs/latest/installing/cloud/azure/#uploading-your-own-image)
+* [Running Flatcar Container Linux on Google Compute Engine](https://www.flatcar.org/docs/latest/installing/cloud/gcp/#uploading-an-image)
+
 ---
 
 ## Community & Project Documentation
